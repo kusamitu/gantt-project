@@ -4,12 +4,59 @@ document.addEventListener("DOMContentLoaded", function(event) {
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2eGR5aXhucWFld2F0cmNsY21uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk1MDAwMTMsImV4cCI6MjA3NTA3NjAxM30.k874leEBwG2hvQE2EmZqEunwYknHGv5iVjbTI5aLohw';
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+    // --- レイアウト設定 ---
+    gantt.config.layout = {
+        css: "gantt_container",
+        rows: [
+            {
+                // メインのガントチャートビュー
+                gravity: 2,
+                cols: [
+                    { view: "grid", scrollX: "gridScroll", scrollY: "scrollVer" },
+                    { view: "timeline", scrollX: "gridScroll", scrollY: "scrollVer" },
+                    { view: "scrollbar", id: "scrollVer" }
+                ]
+            },
+            { resizer: true, width: 1 },
+            {
+                // 担当者負荷のリソースビュー
+                gravity: 1,
+                cols: [
+                    {
+                        view: "resourceGrid",
+                        scrollY: "resourceScrollVer"
+                    },
+                    { resizer: true, width: 1 },
+                    { view: "resourceTimeline", scrollX: "gridScroll", scrollY: "resourceScrollVer" },
+                    { view: "scrollbar", id: "resourceScrollVer" }
+                ]
+            },
+            // 上下のタイムラインで水平スクロールを共有
+            { view: "scrollbar", id: "gridScroll" }
+        ]
+    };
+
     // --- リソース設定 ---
     gantt.config.resource_store = "resource";
     gantt.config.resource_property = "resource_id";
     gantt.config.resource_render_empty_cells = true;
     gantt.config.order_branch = true;
     gantt.config.order_branch_free = true;
+
+    // ★ リソースグリッド専用の列定義
+    gantt.config.resource_grid_columns = [
+        { name: "name", label: "担当者", width: 200, resize: true }
+    ];
+
+    gantt.templates.resource_cell_class = function (start_date, end_date, resource, tasks) {
+        if (tasks.length === 0) return "gantt_resource_cell_empty";
+        if (tasks.length > 1) return "gantt_resource_cell_overload";
+        return "gantt_resource_cell_workday";
+    };
+
+    gantt.templates.resource_cell_value = function (start_date, end_date, resource, tasks) {
+        return "<div>" + tasks.length + "</div>";
+    };
 
     // 2. 表示する列の定義
     gantt.config.columns = [
@@ -35,83 +82,6 @@ document.addEventListener("DOMContentLoaded", function(event) {
         { name: "delete", label: "", width: 25, template: (task) => "<div class='gantt_grid_delete_icon'></div>" },
         { name: "add", label: "", width: 25 }
     ];
-
-    // メインガントチャートのグリッド幅を自動計算(全ての列を含む)
-    const mainGridWidth = gantt.config.columns.reduce((total, col) => {
-        return total + (typeof col.width === 'number' ? col.width : 0);
-    }, 0);
-
-    // 削除列と追加列の幅を自動取得
-    const deleteColumn = gantt.config.columns.find(col => col.name === "delete");
-    const addColumn = gantt.config.columns.find(col => col.name === "add");
-    const deleteColumnWidth = deleteColumn ? (typeof deleteColumn.width === 'number' ? deleteColumn.width : 0) : 0;
-    const addColumnWidth = addColumn ? (typeof addColumn.width === 'number' ? addColumn.width : 0) : 0;
-
-    // 担当者列の幅
-    const resourceColumnWidth = 100;
-    
-    // 空白スペースの幅(削除列と追加列の分を追加)
-    const spacerWidth = mainGridWidth - resourceColumnWidth + deleteColumnWidth + addColumnWidth;
-
-    // --- レイアウト設定 ---
-    gantt.config.layout = {
-        css: "gantt_container",
-        rows: [
-            {
-                cols: [
-                    { view: "grid", scrollX: "scrollHor", scrollY: "scrollVer" },
-                    { view: "timeline", scrollX: "scrollHor", scrollY: "scrollVer" },
-                    { view: "scrollbar", id: "scrollVer" }
-                ],
-                gravity: 2
-            },
-            { resizer: true, width: 1 },
-            {
-                gravity: 1,
-                cols: [
-                    {
-                        width: spacerWidth,
-                        rows: [
-                            { view: "scrollbar", scroll: "y" }
-                        ]
-                    },
-                    {
-                        view: "resourceGrid",
-                        scrollY: "resourceScrollVer",
-                        width: resourceColumnWidth,
-                        config: {
-                            columns: [
-                                { 
-                                    name: "name", 
-                                    label: "担当者", 
-                                    tree: true, 
-                                    width: "*", 
-                                    template: function(resource) { 
-                                        return resource.name; 
-                                    },
-                                    resize: true 
-                                }
-                            ]
-                        }
-                    },
-                    { resizer: true, width: 1 },
-                    { view: "resourceTimeline", scrollX: "scrollHor", scrollY: "resourceScrollVer" },
-                    { view: "scrollbar", id: "resourceScrollVer" }
-                ]
-            },
-            { view: "scrollbar", id: "scrollHor" }
-        ]
-    };
-
-    gantt.templates.resource_cell_class = function (start_date, end_date, resource, tasks) {
-        if (tasks.length === 0) return "gantt_resource_cell_empty";
-        if (tasks.length > 1) return "gantt_resource_cell_overload";
-        return "gantt_resource_cell_workday";
-    };
-
-    gantt.templates.resource_cell_value = function (start_date, end_date, resource, tasks) {
-        return "<div>" + tasks.length + "</div>";
-    };
 
     // --- 日付・スケール設定 ---
     gantt.config.date_format = "%Y-%m-%d";
@@ -283,7 +253,7 @@ document.addEventListener("DOMContentLoaded", function(event) {
         content.querySelectorAll(".resource-delete-btn").forEach(btn => {
             btn.addEventListener("click", (e) => {
                 const id = e.target.parentElement.dataset.id;
-                gantt.confirm({ text: "この担当者を削除しますか?関連するタスクの割り当てが解除されます。", ok: "はい", cancel: "いいえ",
+                gantt.confirm({ text: "この担当者を削除しますか？関連するタスクの割り当てが解除されます。", ok: "はい", cancel: "いいえ",
                     callback: async (result) => {
                         if (!result) return;
                         const { error } = await db.from('resources').delete().eq('id', id);
@@ -308,7 +278,7 @@ document.addEventListener("DOMContentLoaded", function(event) {
     // --- その他イベント ---
     gantt.attachEvent("onTaskClick", (id, e) => {
         if (e.target.classList.contains("gantt_grid_delete_icon")) {
-            gantt.confirm({ text: "このタスクを削除してもよろしいですか?", ok: "はい", cancel: "いいえ",
+            gantt.confirm({ text: "このタスクを削除してもよろしいですか？", ok: "はい", cancel: "いいえ",
                 callback: (result) => {
                     if (result) gantt.deleteTask(id);
                 }
