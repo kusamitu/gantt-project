@@ -3,7 +3,25 @@ html, body {
     height: 100%;
     padding: 0;
     margin: 0;
-    overflow: hidden;
+}
+
+.gantt-controls {
+    padding: 10px;
+    background-color: #f4f4f4;
+    border-bottom: 1px solid #ddd;
+}
+
+.gantt-controls button {
+    background-color: #4a90e2;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.gantt-controls button:hover {
+    background-color: #357abd;
 }
 
 .gantt_grid_delete_icon {
@@ -25,4 +43,85 @@ html, body {
 .gantt_grid_scale .gantt_grid_head_cell:last-of-type,
 .gantt_grid_data .gantt_cell:last-of-type {
     border-right: none;
+}
+
+/* --- リソース負荷表示用のスタイル --- */
+.gantt_resource_cell_workday {
+    background-color: #dcf4dd; /* 通常時の背景色（薄い緑） */
+}
+
+.gantt_resource_cell_overload {
+    background-color: #ffdddd; /* 過負荷時の背景色（薄い赤） */
+}
+
+.gantt_resource_cell_empty {
+    background-color: #fafafa; /* タスクがない日の背景色（薄いグレー） */
+}
+
+.gantt_resource_timeline .gantt_task_cell div {
+    text-align: center;
+}
+
+/* --- 担当者管理ウィンドウのスタイル --- */
+.resource-editor {
+    padding: 20px;
+    background-color: white;
+    border-radius: 5px;
+}
+
+.resource-editor h3 {
+    margin-top: 0;
+}
+
+.resource-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px 0;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 5px;
+}
+
+.resource-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px;
+    border-bottom: 1px solid #eee;
+}
+
+.resource-list-item:last-child {
+    border-bottom: none;
+}
+
+.resource-delete-btn {
+    color: #e91e63;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.resource-form {
+    display: flex;
+}
+
+.resource-form input {
+    flex-grow: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.resource-form button {
+    margin-left: 10px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.resource-form button:hover {
+    background-color: #45a049;
 }
