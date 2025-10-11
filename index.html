@@ -8,11 +8,25 @@
 </head>
 <body>
     <div class="gantt-controls">
-        <button id="resource_manager_btn">担当者管理</button>
+        <button id="resource_manager_btn">担当者登録</button>
+        <button id="place_manager_btn">場所登録</button>
+        <button id="color_settings_btn">バーの色設定</button>
+        <button id="toggle_timeline_btn">場所負荷に切替</button>
+        <button id="add_period_btn">試運転期間を追加</button>
     </div>
-    <div id="gantt_here" style='width:100%; height:calc(100% - 50px);'></div>
+    <div id="gantt_here"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="codebase/dhtmlxgantt.js"></script>
-    <script src="script.js"></script>
+    <script src="js/supabase-client.js"></script>
+    <script src="js/gantt-config.js"></script>
+    <script src="js/gantt-data.js"></script>
+    <script src="js/gantt-ui.js"></script>
+    <script src="js/gantt-register.js"></script>
+    <script src="js/custom-lightbox.js"></script>
+    <script src="js/gantt-tooltip.js"></script>
+    <script src="js/gantt-timeline-toggle.js"></script>
+    <script src="js/gantt-row-colors.js"></script>
+    <script src="js/gantt-multi-bars.js"></script>
+    <script src="js/main.js"></script>
 </body>
 </html>

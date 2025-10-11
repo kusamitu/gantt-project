@@ -3,12 +3,20 @@ html, body {
     height: 100%;
     padding: 0;
     margin: 0;
+    overflow: hidden; /* 画面全体のスクロールを無効化 */
+}
+
+#gantt_here {
+    height: calc(100% - 50px);
+    width: 100%;
 }
 
 .gantt-controls {
     padding: 10px;
     background-color: #f4f4f4;
     border-bottom: 1px solid #ddd;
+    height: 50px;
+    box-sizing: border-box;
 }
 
 .gantt-controls button {
@@ -45,6 +53,37 @@ html, body {
     border-right: none;
 }
 
+/* 担当者と場所のセルでテキストを省略表示 */
+.gantt_cell[data-column-name="resource_id"],
+.gantt_cell[data-column-name="place_id"] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gantt_cell[data-column-name="resource_id"] span,
+.gantt_cell[data-column-name="place_id"] span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+}
+
+/* カスタムツールチップのスタイル */
+.gantt-tooltip {
+    position: absolute;
+    background-color: #333;
+    color: white;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    z-index: 10000;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
 /* --- リソース負荷表示用のスタイル --- */
 .gantt_resource_cell_workday {
     background-color: #dcf4dd; /* 通常時の背景色（薄い緑） */
@@ -62,18 +101,21 @@ html, body {
     text-align: center;
 }
 
-/* --- 担当者管理ウィンドウのスタイル --- */
-.resource-editor {
+/* --- 担当者・場所管理ウィンドウの共通スタイル --- */
+.resource-editor,
+.place-editor {
     padding: 20px;
     background-color: white;
     border-radius: 5px;
 }
 
-.resource-editor h3 {
+.resource-editor h3,
+.place-editor h3 {
     margin-top: 0;
 }
 
-.resource-list {
+.resource-list,
+.place-list {
     list-style: none;
     padding: 0;
     margin: 0 0 20px 0;
@@ -83,7 +125,8 @@ html, body {
     padding: 5px;
 }
 
-.resource-list-item {
+.resource-list-item,
+.place-list-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -91,28 +134,33 @@ html, body {
     border-bottom: 1px solid #eee;
 }
 
-.resource-list-item:last-child {
+.resource-list-item:last-child,
+.place-list-item:last-child {
     border-bottom: none;
 }
 
-.resource-delete-btn {
+.resource-delete-btn,
+.place-delete-btn {
     color: #e91e63;
     cursor: pointer;
     font-size: 16px;
 }
 
-.resource-form {
+.resource-form,
+.place-form {
     display: flex;
 }
 
-.resource-form input {
+.resource-form input,
+.place-form input {
     flex-grow: 1;
     padding: 8px;
     border: 1px solid #ccc;
     border-radius: 4px;
 }
 
-.resource-form button {
+.resource-form button,
+.place-form button {
     margin-left: 10px;
     background-color: #4CAF50;
     color: white;
@@ -122,6 +170,18 @@ html, body {
     cursor: pointer;
 }
 
-.resource-form button:hover {
+.resource-form button:hover,
+.place-form button:hover {
     background-color: #45a049;
+}
+
+/* --- 追加期間（試運転）バーのスタイル --- */
+.gantt_additional_period {
+    background-color: #FF69B4 !important;
+    border-color: #E91E63 !important;
+    z-index: 2 !important;
+}
+
+.gantt_additional_period * {
+    pointer-events: auto;
 }
