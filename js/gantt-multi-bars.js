@@ -1,26 +1,480 @@
-// 複数バー表示機能
+// 複数バー表示機能（スリム化版）
 
-// 期間追加モードの状態管理
+// 状態管理変数
 let addPeriodMode = false;
 let dragStartDate = null;
 let dragEndDate = null;
 let currentTaskId = null;
 let dragPreviewElement = null;
 
-// 試運転バーのドラッグ状態管理
-let isDraggingPeriod = false;
-let isResizingPeriod = false;
-let draggedPeriodData = null;
-let resizeDirection = null; // 'left' or 'right'
-let dragOffsetX = 0;
-
-// 試運転バーの設定
 const TRIAL_RUN_CONFIG = {
     name: '試運転',
-    color: '#FF69B4' // ピンク色
+    color: '#FF69B4'
 };
 
-// 期間追加モードの切り替え
+// ユーティリティ関数
+function shadeColor(color, percent) {
+    const hex = color.replace('#', '');
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    
+    const newR = Math.min(255, Math.max(0, Math.round(r * (100 + percent) / 100)));
+    const newG = Math.min(255, Math.max(0, Math.round(g * (100 + percent) / 100)));
+    const newB = Math.min(255, Math.max(0, Math.round(b * (100 + percent) / 100)));
+    
+    return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
+}
+
+function getTextColorForBackground(hexColor) {
+    const hex = hexColor.replace('#', '');
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
+    return luminance > 128 ? '#000000' : '#FFFFFF';
+}
+
+function normalizeDate(date) {
+    const normalized = new Date(date);
+    normalized.setHours(0, 0, 0, 0);
+    return normalized;
+}
+
+// 位置計算関数
+function getDirectPosition(date) {
+    const timelineElement = gantt.$task_data;
+    if (!timelineElement) return 0;
+    
+    const startDate = gantt.getState().min_date;
+    const endDate = gantt.getState().max_date;
+    const totalWidth = timelineElement.offsetWidth;
+    const totalDays = (endDate - startDate) / (1000 * 60 * 60 * 24);
+    const dayWidth = totalWidth / totalDays;
+    
+    const daysFromStart = (date - startDate) / (1000 * 60 * 60 * 24);
+    return daysFromStart * dayWidth;
+}
+
+function getDirectDate(position) {
+    const timelineElement = gantt.$task_data;
+    if (!timelineElement) return new Date();
+    
+    const startDate = gantt.getState().min_date;
+    const endDate = gantt.getState().max_date;
+    const totalWidth = timelineElement.offsetWidth;
+    const totalDays = (endDate - startDate) / (1000 * 60 * 60 * 24);
+    const dayWidth = totalWidth / totalDays;
+    
+    const daysFromStart = position / dayWidth;
+    const resultDate = new Date(startDate.getTime() + (daysFromStart * 24 * 60 * 60 * 1000));
+    return normalizeDate(resultDate);
+}
+
+function getTaskTopPosition(taskId) {
+    try {
+        const taskPosition = gantt.getTaskPosition(gantt.getTask(taskId));
+        if (taskPosition && typeof taskPosition.top === 'number') {
+            return taskPosition.top;
+        }
+    } catch (e) {
+        console.warn('[Y座標取得失敗]', e);
+    }
+    
+    const taskRow = document.querySelector(`.gantt_task_row[task_id="${taskId}"]`);
+    if (taskRow) {
+        const timelineRect = gantt.$task_data.getBoundingClientRect();
+        const pos = gantt.getScrollState();
+        const rowRect = taskRow.getBoundingClientRect();
+        const rowTop = (rowRect.top - timelineRect.top) + pos.y;
+        
+        const mainBar = document.querySelector(`.gantt_task_line[task_id="${taskId}"]:not(.gantt_additional_period)`);
+        const barOffset = mainBar && mainBar.style.top ? parseInt(mainBar.style.top) || 1 : 1;
+        
+        return rowTop + barOffset;
+    }
+    
+    return null;
+}
+
+// 重複検出関数
+function detectTaskBarCollision(taskId, startDate, endDate) {
+    const task = gantt.getTask(taskId);
+    if (!task) return null;
+    
+    const taskStart = normalizeDate(task.start_date);
+    const taskEnd = normalizeDate(task.end_date);
+    const trialStart = normalizeDate(startDate);
+    const trialEnd = normalizeDate(endDate);
+    
+    const hasOverlap = trialStart <= taskEnd && trialEnd >= taskStart;
+    
+    return hasOverlap ? {
+        taskStart, taskEnd, trialStart, trialEnd, overlap: true
+    } : null;
+}
+
+function detectTrialBarCollision(taskId, startDate, endDate) {
+    const task = gantt.getTask(taskId);
+    if (!task || !task.periods) return null;
+    
+    const trialStart = normalizeDate(startDate);
+    const trialEnd = normalizeDate(endDate);
+    
+    for (const period of task.periods) {
+        if (period.type === 'trial') {
+            const existingStart = normalizeDate(period.start_date);
+            const existingEnd = normalizeDate(period.end_date);
+            
+            const hasOverlap = trialStart <= existingEnd && trialEnd >= existingStart;
+            
+            if (hasOverlap) {
+                return {
+                    taskStart: existingStart, taskEnd: existingEnd,
+                    trialStart, trialEnd, overlap: true
+                };
+            }
+        }
+    }
+    
+    return null;
+}
+
+// 試運転バー自動調整関数
+function adjustTrialBarToAvoidCollision(taskId, startDate, endDate) {
+    const taskCollision = detectTaskBarCollision(taskId, startDate, endDate);
+    const trialCollision = detectTrialBarCollision(taskId, startDate, endDate);
+    
+    if (!taskCollision && !trialCollision) {
+        return { startDate, endDate, adjusted: false };
+    }
+    
+    const collision = taskCollision || trialCollision;
+    const { taskStart, taskEnd, trialStart, trialEnd } = collision;
+    
+    let adjustedStart = new Date(trialStart);
+    let adjustedEnd = new Date(trialEnd);
+    
+    // 境界の日付を完全に同一にする
+    if (trialStart < taskStart) {
+        adjustedEnd = new Date(taskStart);
+        adjustedEnd.setHours(0, 0, 0, 0);
+    } else if (trialEnd > taskEnd) {
+        adjustedStart = new Date(taskEnd);
+        adjustedStart.setHours(0, 0, 0, 0);
+    } else {
+        const beforeDuration = (taskStart - trialStart) / (1000 * 60 * 60 * 24);
+        const afterDuration = (trialEnd - taskEnd) / (1000 * 60 * 60 * 24);
+        
+        if (beforeDuration >= afterDuration) {
+            adjustedEnd = new Date(taskStart);
+            adjustedEnd.setHours(0, 0, 0, 0);
+        } else {
+            adjustedStart = new Date(taskEnd);
+            adjustedStart.setHours(0, 0, 0, 0);
+        }
+    }
+    
+    // 最小期間を確保
+    const duration = (adjustedEnd - adjustedStart) / (1000 * 60 * 60 * 24);
+    const minDuration = 1;
+    
+    if (duration < minDuration) {
+        if (adjustedStart < taskStart) {
+            adjustedStart = new Date(taskStart);
+            adjustedStart.setDate(adjustedStart.getDate() - minDuration);
+            adjustedStart.setHours(0, 0, 0, 0);
+            adjustedEnd = new Date(taskStart);
+            adjustedEnd.setHours(0, 0, 0, 0);
+        } else {
+            adjustedStart = new Date(taskEnd);
+            adjustedStart.setHours(0, 0, 0, 0);
+            adjustedEnd = new Date(taskEnd);
+            adjustedEnd.setDate(adjustedEnd.getDate() + minDuration);
+            adjustedEnd.setHours(0, 0, 0, 0);
+        }
+    }
+    
+    return { startDate: adjustedStart, endDate: adjustedEnd, adjusted: true };
+}
+
+// 期間管理関数
+function updatePeriod(taskId, periodId, startDate, endDate) {
+    const task = gantt.getTask(taskId);
+    if (!task || !task.periods) return;
+    
+    const period = task.periods.find(p => p.id === periodId);
+    if (!period) return;
+    
+    period.start_date = normalizeDate(startDate);
+    period.end_date = normalizeDate(endDate);
+    
+    gantt.updateTask(taskId);
+    gantt.refreshData();
+    
+    if (typeof gantt.saveData === 'function') {
+        setTimeout(() => gantt.saveData(), 50);
+    }
+}
+
+function deletePeriod(taskId, periodId) {
+    const task = gantt.getTask(taskId);
+    if (!task || !task.periods) return;
+    
+    task.periods = task.periods.filter(p => p.id !== periodId);
+    gantt.updateTask(taskId);
+    
+    const periodElement = document.querySelector(`[data-period-id="${periodId}"]`);
+    if (periodElement && periodElement.parentNode) {
+        periodElement.parentNode.removeChild(periodElement);
+    }
+    
+    gantt.refreshData();
+    if (typeof gantt.saveData === 'function') {
+        setTimeout(() => gantt.saveData(), 50);
+    }
+    
+    renderAllExistingPeriods();
+}
+
+// ドラッグ・リサイズ機能
+function addDragResizeHandlers(element, taskId, periodId) {
+    let isDragging = false;
+    let isResizing = false;
+    let startX = 0;
+    let startLeft = 0;
+    let startWidth = 0;
+    let resizeDirection = null;
+    
+    element.addEventListener('mousemove', function(e) {
+        const rect = element.getBoundingClientRect();
+        const mouseX = e.clientX;
+        const handleWidth = 12;
+        
+        if (mouseX - rect.left <= handleWidth || rect.right - mouseX <= handleWidth) {
+            element.style.cursor = 'ew-resize';
+        } else {
+            element.style.cursor = 'move';
+        }
+    });
+    
+    element.addEventListener('mousedown', function(e) {
+        if (e.target.innerHTML === '✕') return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        isDragging = true;
+        startX = e.clientX;
+        startLeft = parseInt(element.style.left);
+        startWidth = parseInt(element.style.width);
+        
+        const rect = element.getBoundingClientRect();
+        const mouseX = e.clientX;
+        const handleWidth = 12;
+        
+        if (mouseX - rect.left <= handleWidth) {
+            isResizing = true;
+            resizeDirection = 'left';
+        } else if (rect.right - mouseX <= handleWidth) {
+            isResizing = true;
+            resizeDirection = 'right';
+        } else {
+            isResizing = false;
+            resizeDirection = null;
+        }
+    });
+    
+    document.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        
+        const deltaX = e.clientX - startX;
+        
+        if (isResizing) {
+            if (resizeDirection === 'left') {
+                const newLeft = Math.max(0, startLeft + deltaX);
+                const newWidth = Math.max(20, startWidth - deltaX);
+                element.style.left = newLeft + 'px';
+                element.style.width = newWidth + 'px';
+            } else if (resizeDirection === 'right') {
+                const newWidth = Math.max(20, startWidth + deltaX);
+                element.style.width = newWidth + 'px';
+            }
+        } else {
+            const newLeft = Math.max(0, startLeft + deltaX);
+            element.style.left = newLeft + 'px';
+        }
+    });
+    
+    document.addEventListener('mouseup', function(e) {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        isResizing = false;
+        element.style.cursor = 'move';
+        
+        const currentLeft = parseFloat(element.style.left) || 0;
+        const currentWidth = parseFloat(element.style.width) || 0;
+        const currentRight = currentLeft + currentWidth;
+        
+        element.style.left = currentLeft + 'px';
+        element.style.width = currentWidth + 'px';
+        
+        const newStartDate = getDirectDate(currentLeft);
+        const newEndDate = getDirectDate(currentRight);
+        
+        const adjusted = adjustTrialBarToAvoidCollision(taskId, newStartDate, newEndDate);
+        
+        if (adjusted.adjusted) {
+            const adjustedLeft = getDirectPosition(adjusted.startDate);
+            const adjustedRight = getDirectPosition(adjusted.endDate);
+            const adjustedWidth = adjustedRight - adjustedLeft;
+            
+            element.style.left = adjustedLeft + 'px';
+            element.style.width = adjustedWidth + 'px';
+            
+            updatePeriod(taskId, periodId, adjusted.startDate, adjusted.endDate);
+            
+            gantt.message({
+                type: "info",
+                text: "試運転バーがタスクバーと重複するため、調整されました。"
+            });
+        } else {
+            updatePeriod(taskId, periodId, newStartDate, newEndDate);
+        }
+        
+        setTimeout(() => {
+            const existingBars = document.querySelectorAll(`[data-task-id="${taskId}"].gantt_additional_period`);
+            existingBars.forEach(bar => {
+                if (bar !== element && bar.parentNode) {
+                    bar.parentNode.removeChild(bar);
+                }
+            });
+            
+            if (adjusted.adjusted) {
+                const finalLeft = getDirectPosition(adjusted.startDate);
+                const finalRight = getDirectPosition(adjusted.endDate);
+                const finalWidth = finalRight - finalLeft;
+                element.style.left = finalLeft + 'px';
+                element.style.width = finalWidth + 'px';
+            } else {
+                element.style.left = currentLeft + 'px';
+                element.style.width = currentWidth + 'px';
+            }
+        }, 10);
+    });
+}
+
+// 期間描画関数
+function renderAllExistingPeriods() {
+    const existingBars = document.querySelectorAll('.gantt_additional_period');
+    existingBars.forEach(bar => {
+        if (bar.parentNode) {
+            bar.parentNode.removeChild(bar);
+        }
+    });
+    
+    setTimeout(() => {
+        const tasks = gantt.getTaskByTime();
+        tasks.forEach(task => {
+            if (task.periods && task.periods.length > 0) {
+                renderCustomPeriods(task);
+            }
+        });
+    }, 10);
+}
+
+function renderCustomPeriods(task) {
+    if (!task.periods || task.periods.length === 0) return;
+    
+    task.periods.forEach(period => {
+        const baseTop = getTaskTopPosition(task.id);
+        if (baseTop === null) return;
+        
+        const leftPos = getDirectPosition(period.start_date);
+        const rightPos = getDirectPosition(period.end_date);
+        const width = rightPos - leftPos;
+        
+        const el = document.createElement('div');
+        el.className = 'gantt_task_line gantt_additional_period';
+        el.setAttribute('data-period-id', period.id);
+        el.setAttribute('data-task-id', task.id);
+        
+        const barColor = (typeof colorSettings !== 'undefined' && colorSettings.trialBar) ? colorSettings.trialBar : '#FF69B4';
+        const textColor = getTextColorForBackground(barColor);
+        const borderColor = shadeColor(barColor, -20);
+        const trialBarHeight = (typeof heightSettings !== 'undefined' && heightSettings.trialBar) ? heightSettings.trialBar : 19;
+        
+        el.style.cssText = `
+            position: absolute;
+            left: ${leftPos}px;
+            top: ${baseTop}px;
+            width: ${width}px;
+            height: ${trialBarHeight}px;
+            background-color: ${barColor};
+            border: 1px solid ${borderColor};
+            border-radius: 3px;
+            z-index: 2;
+            cursor: move;
+        `;
+        
+        el.style.left = leftPos + 'px';
+        el.style.width = width + 'px';
+        
+        const textDiv = document.createElement('div');
+        textDiv.style.cssText = `
+            color: ${textColor}; 
+            padding: 0 8px; 
+            font-size: 11px; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            white-space: nowrap; 
+            pointer-events: none;
+        `;
+        textDiv.textContent = period.name;
+        el.appendChild(textDiv);
+        
+        const deleteBtn = document.createElement('div');
+        deleteBtn.innerHTML = '✕';
+        deleteBtn.style.cssText = `
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            cursor: pointer;
+            color: #ff4444;
+            font-weight: bold;
+            z-index: 3;
+        `;
+        deleteBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            if (confirm('この期間を削除しますか？')) {
+                const periodElement = document.querySelector(`[data-period-id="${period.id}"]`);
+                if (periodElement && periodElement.parentNode) {
+                    periodElement.parentNode.removeChild(periodElement);
+                }
+                deletePeriod(task.id, period.id);
+            }
+        });
+        el.appendChild(deleteBtn);
+        
+        addDragResizeHandlers(el, task.id, period.id);
+        
+        const timelineElement = gantt.$task_data;
+        if (timelineElement) {
+            timelineElement.appendChild(el);
+        }
+    });
+}
+
+// 期間追加機能
 function toggleAddPeriodMode() {
     addPeriodMode = !addPeriodMode;
     const btn = document.getElementById('add_period_btn');
@@ -37,7 +491,6 @@ function toggleAddPeriodMode() {
     }
 }
 
-// ドラッグプレビューを削除
 function removeDragPreview() {
     if (dragPreviewElement && dragPreviewElement.parentNode) {
         dragPreviewElement.parentNode.removeChild(dragPreviewElement);
@@ -45,16 +498,14 @@ function removeDragPreview() {
     }
 }
 
-// タスクに新しい期間を追加
 function addPeriodToTask(taskId, startDate, endDate) {
     const task = gantt.getTask(taskId);
+    if (!task) return false;
     
-    // periods配列が存在しない場合は初期化
     if (!task.periods) {
         task.periods = [];
     }
     
-    // 重なりチェック
     if (checkPeriodOverlap(task, startDate, endDate)) {
         gantt.alert({
             type: "error",
@@ -63,59 +514,138 @@ function addPeriodToTask(taskId, startDate, endDate) {
         return false;
     }
     
-    // 新しい期間を追加
+    const adjusted = adjustTrialBarToAvoidCollision(taskId, startDate, endDate);
+    
+    if (adjusted.adjusted) {
+        gantt.message({
+            type: "info",
+            text: "試運転バーがタスクバーと重複するため、調整されました。"
+        });
+    }
+    
     const newPeriod = {
         id: generatePeriodId(),
         name: TRIAL_RUN_CONFIG.name,
-        start_date: new Date(startDate),
-        end_date: new Date(endDate),
-        color: TRIAL_RUN_CONFIG.color
+        start_date: adjusted.startDate,
+        end_date: adjusted.endDate,
+        color: (typeof colorSettings !== 'undefined' && colorSettings.trialBar) ? colorSettings.trialBar : TRIAL_RUN_CONFIG.color
     };
     
     task.periods.push(newPeriod);
-    
-    // タスクを更新
     gantt.updateTask(taskId);
+    
+    setTimeout(() => {
+        gantt.refreshTask(taskId);
+        gantt.render();
+        
+        const task = gantt.getTask(taskId);
+        if (task && task.periods && task.periods.length > 0) {
+            const existingBars = document.querySelectorAll(`[data-task-id="${taskId}"].gantt_additional_period`);
+            existingBars.forEach(bar => {
+                if (bar.parentNode) {
+                    bar.parentNode.removeChild(bar);
+                }
+            });
+            
+            gantt.refreshTask(taskId);
+            gantt.render();
+            
+            setTimeout(() => {
+                gantt.refreshTask(taskId);
+                gantt.render();
+                renderCustomPeriods(task);
+            }, 50);
+        }
+    }, 100);
     
     return true;
 }
 
-// 期間の重なりをチェック
 function checkPeriodOverlap(task, newStart, newEnd) {
     const newStartTime = new Date(newStart).getTime();
     const newEndTime = new Date(newEnd).getTime();
     
-    // メインタスクとの重なりチェック
     if (task.start_date && task.end_date) {
         const mainStart = task.start_date.getTime();
         const mainEnd = task.end_date.getTime();
-        
-        if (!(newEndTime <= mainStart || newStartTime >= mainEnd)) {
-            return true; // 重なりあり
-        }
+        if (!(newEndTime <= mainStart || newStartTime >= mainEnd)) return true;
     }
     
-    // 他の期間との重なりチェック
     if (task.periods && task.periods.length > 0) {
         for (let period of task.periods) {
             const periodStart = new Date(period.start_date).getTime();
             const periodEnd = new Date(period.end_date).getTime();
-            
-            if (!(newEndTime <= periodStart || newStartTime >= periodEnd)) {
-                return true; // 重なりあり
-            }
+            if (!(newEndTime <= periodStart || newStartTime >= periodEnd)) return true;
         }
     }
     
-    return false; // 重なりなし
+    return false;
 }
 
-// ユニークなIDを生成
 function generatePeriodId() {
     return 'period_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
-// カスタムレイヤーで追加の期間を描画
+// ドラッグプレビュー機能
+function showDragPreview(taskId, startDate, endDate) {
+    if (!startDate || !endDate) return;
+    
+    let start = normalizeDate(startDate);
+    let end = normalizeDate(endDate);
+    
+    if (start.getTime() > end.getTime()) [start, end] = [end, start];
+    
+    removeDragPreview();
+    
+    const leftPos = getDirectPosition(start);
+    const rightPos = getDirectPosition(end);
+    const width = rightPos - leftPos;
+    
+    const trialBarHeight = (typeof heightSettings !== 'undefined' && heightSettings.trialBar) ? heightSettings.trialBar : 19;
+    const correctTop = getTaskTopPosition(taskId);
+    if (correctTop === null) return;
+    
+    const barColor = (typeof colorSettings !== 'undefined' && colorSettings.trialBar) ? colorSettings.trialBar : '#FF69B4';
+    const borderColor = shadeColor(barColor, -30);
+    
+    dragPreviewElement = document.createElement('div');
+    dragPreviewElement.className = 'gantt_drag_preview';
+    dragPreviewElement.style.cssText = `
+        position: absolute;
+        left: ${leftPos}px;
+        top: ${correctTop}px;
+        width: ${width}px;
+        height: ${trialBarHeight}px;
+        background-color: ${barColor};
+        opacity: 0.6;
+        border: 2px dashed ${borderColor};
+        border-radius: 3px;
+        pointer-events: none;
+        z-index: 10;
+    `;
+    gantt.$task_data.appendChild(dragPreviewElement);
+}
+
+function getDateFromMouseEvent(e, timelineElement) {
+    const pos = gantt.getScrollState();
+    const timelineRect = timelineElement.getBoundingClientRect();
+    const relativeX = e.clientX - timelineRect.left;
+    const absoluteX = relativeX + pos.x;
+    
+    const state = gantt.getState();
+    const minDate = state.min_date;
+    const maxDate = state.max_date;
+    const fullWidth = timelineElement.scrollWidth;
+    const dateRange = maxDate.getTime() - minDate.getTime();
+    
+    const ratio = absoluteX / fullWidth;
+    const timestamp = minDate.getTime() + (dateRange * ratio);
+    const date = new Date(timestamp);
+    
+    return date;
+}
+
+// カスタムレイヤー
 gantt.addTaskLayer(function(task) {
     if (!task.periods || task.periods.length === 0) {
         return false;
@@ -125,191 +655,84 @@ gantt.addTaskLayer(function(task) {
     
     task.periods.forEach(period => {
         try {
-            const sizes = gantt.getTaskPosition(task, period.start_date, period.end_date);
+            const baseTop = getTaskTopPosition(task.id);
+            if (baseTop === null) return;
+            
+            const leftPos = getDirectPosition(period.start_date);
+            const rightPos = getDirectPosition(period.end_date);
+            const width = rightPos - leftPos;
             
             const el = document.createElement('div');
             el.className = 'gantt_task_line gantt_additional_period';
             el.setAttribute('data-period-id', period.id);
             el.setAttribute('data-task-id', task.id);
-            el.style.left = sizes.left + 'px';
-            el.style.top = (sizes.top + 5) + 'px';
-            el.style.width = sizes.width + 'px';
-            el.style.height = (gantt.config.row_height - 10) + 'px';
-            el.style.backgroundColor = period.color + ' !important';
-            el.style.border = `1px solid ${shadeColor(period.color, -20)} !important`;
-            el.style.borderRadius = '3px';
-            el.style.lineHeight = (gantt.config.row_height - 10) + 'px';
-            el.style.position = 'absolute';
-            el.style.zIndex = '2';
-            el.style.cursor = 'move';
-            el.style.cssText += `background-color: ${period.color} !important; border-color: ${shadeColor(period.color, -20)} !important;`;
             
-            const textColor = getTextColorForBackground(period.color);
+            const barColor = (typeof colorSettings !== 'undefined' && colorSettings.trialBar) ? colorSettings.trialBar : '#FF69B4';
+            const textColor = getTextColorForBackground(barColor);
+            const borderColor = shadeColor(barColor, -20);
+            const trialBarHeight = (typeof heightSettings !== 'undefined' && heightSettings.trialBar) ? heightSettings.trialBar : 19;
+            
+            el.style.cssText = `
+                position: absolute;
+                left: ${leftPos}px;
+                top: ${baseTop}px;
+                width: ${width}px;
+                height: ${trialBarHeight}px;
+                background-color: ${barColor};
+                border: 1px solid ${borderColor};
+                border-radius: 3px;
+                z-index: 2;
+                cursor: move;
+            `;
+            
+            el.style.left = leftPos + 'px';
+            el.style.width = width + 'px';
+            
             const textDiv = document.createElement('div');
-            textDiv.style.cssText = `color: ${textColor}; padding: 0 8px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;`;
+            textDiv.style.cssText = `
+                color: ${textColor}; 
+                padding: 0 8px; 
+                font-size: 11px; 
+                overflow: hidden; 
+                text-overflow: ellipsis; 
+                white-space: nowrap; 
+                pointer-events: none;
+            `;
             textDiv.textContent = period.name;
             el.appendChild(textDiv);
             
-            // 左端のリサイズハンドル
-            const leftHandle = document.createElement('div');
-            leftHandle.className = 'period_resize_handle period_resize_left';
-            leftHandle.style.cssText = `
+            const deleteBtn = document.createElement('div');
+            deleteBtn.innerHTML = '✕';
+            deleteBtn.style.cssText = `
                 position: absolute;
-                left: 0;
-                top: 0;
-                width: 10px;
-                height: 100%;
-                cursor: ew-resize;
-                z-index: 11;
-                background-color: rgba(255, 255, 255, 0.3);
-            `;
-            el.appendChild(leftHandle);
-            
-            // 右端のリサイズハンドル
-            const rightHandle = document.createElement('div');
-            rightHandle.className = 'period_resize_handle period_resize_right';
-            rightHandle.style.cssText = `
-                position: absolute;
-                right: 0;
-                top: 0;
-                width: 10px;
-                height: 100%;
-                cursor: ew-resize;
-                z-index: 11;
-                background-color: rgba(255, 255, 255, 0.3);
-            `;
-            el.appendChild(rightHandle);
-            
-            const deleteIcon = document.createElement('span');
-            deleteIcon.className = 'period_delete_icon';
-            deleteIcon.innerHTML = '×';
-            deleteIcon.style.cssText = `
-                position: absolute;
-                right: 3px;
+                right: 2px;
                 top: 50%;
                 transform: translateY(-50%);
-                color: ${textColor};
+                width: 16px;
+                height: 16px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
                 cursor: pointer;
-                font-size: 16px;
+                color: #ff4444;
                 font-weight: bold;
-                padding: 0 4px;
-                display: none;
-                z-index: 10;
+                z-index: 3;
             `;
-            
-            el.appendChild(deleteIcon);
-            
-            el.addEventListener('mouseenter', (e) => {
-                e.stopPropagation();
-                if (!isDraggingPeriod && !isResizingPeriod) {
-                    deleteIcon.style.display = 'block';
-                }
-            });
-            
-            el.addEventListener('mouseleave', (e) => {
-                e.stopPropagation();
-                deleteIcon.style.display = 'none';
-            });
-            
-            // ドラッグ開始（移動）
-            el.addEventListener('mousedown', (e) => {
-                console.log('Period mousedown', { addPeriodMode, target: e.target.className });
-                
-                if (addPeriodMode) return;
-                
-                // リサイズハンドルまたは削除アイコンをクリックした場合は無視
-                if (e.target.classList.contains('period_resize_handle') || 
-                    e.target.classList.contains('period_delete_icon')) {
-                    console.log('Clicked on handle or delete icon, ignoring');
-                    return;
-                }
-                
+            deleteBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                
-                console.log('Starting drag');
-                isDraggingPeriod = true;
-                draggedPeriodData = {
-                    taskId: task.id,
-                    periodId: period.id,
-                    element: el,
-                    startDate: new Date(period.start_date),
-                    endDate: new Date(period.end_date)
-                };
-                
-                const rect = el.getBoundingClientRect();
-                dragOffsetX = e.clientX - rect.left;
-                
-                el.style.opacity = '0.7';
-                deleteIcon.style.display = 'none';
-            });
-            
-            // リサイズハンドルのイベント
-            leftHandle.addEventListener('mousedown', (e) => {
-                console.log('Left handle mousedown');
-                
-                if (addPeriodMode) return;
-                
-                e.stopPropagation();
-                e.preventDefault();
-                
-                console.log('Starting left resize');
-                isResizingPeriod = true;
-                resizeDirection = 'left';
-                draggedPeriodData = {
-                    taskId: task.id,
-                    periodId: period.id,
-                    element: el,
-                    startDate: new Date(period.start_date),
-                    endDate: new Date(period.end_date)
-                };
-                
-                el.style.opacity = '0.7';
-                deleteIcon.style.display = 'none';
-            });
-            
-            rightHandle.addEventListener('mousedown', (e) => {
-                console.log('Right handle mousedown');
-                
-                if (addPeriodMode) return;
-                
-                e.stopPropagation();
-                e.preventDefault();
-                
-                console.log('Starting right resize');
-                isResizingPeriod = true;
-                resizeDirection = 'right';
-                draggedPeriodData = {
-                    taskId: task.id,
-                    periodId: period.id,
-                    element: el,
-                    startDate: new Date(period.start_date),
-                    endDate: new Date(period.end_date)
-                };
-                
-                el.style.opacity = '0.7';
-                deleteIcon.style.display = 'none';
-            });
-            
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-            });
-            
-            deleteIcon.addEventListener('click', (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                gantt.confirm({
-                    text: `「${period.name}」期間を削除しますか?`,
-                    ok: "はい",
-                    cancel: "いいえ",
-                    callback: (result) => {
-                        if (result) {
-                            deletePeriod(task.id, period.id);
-                        }
+                if (confirm('この期間を削除しますか？')) {
+                    const periodElement = document.querySelector(`[data-period-id="${period.id}"]`);
+                    if (periodElement && periodElement.parentNode) {
+                        periodElement.parentNode.removeChild(periodElement);
                     }
-                });
+                    deletePeriod(task.id, period.id);
+                }
             });
+            el.appendChild(deleteBtn);
+            
+            addDragResizeHandlers(el, task.id, period.id);
             
             elements.push(el);
         } catch (error) {
@@ -319,319 +742,221 @@ gantt.addTaskLayer(function(task) {
     
     if (elements.length === 0) {
         return false;
-    } else if (elements.length === 1) {
-        return elements[0];
-    } else {
-        const container = document.createElement('div');
-        container.style.cssText = 'position: absolute; width: 100%; height: 100%; pointer-events: none;';
-        elements.forEach(el => {
-            el.style.pointerEvents = 'auto';
-            container.appendChild(el);
-        });
-        return container;
     }
+    if (elements.length === 1) {
+        return elements[0];
+    }
+    
+    const container = document.createElement('div');
+    container.style.cssText = 'position: absolute; width: 100%; height: 100%; pointer-events: none;';
+    elements.forEach(el => {
+        el.style.pointerEvents = 'auto';
+        container.appendChild(el);
+    });
+    return container;
 });
 
-// 期間を削除
-function deletePeriod(taskId, periodId) {
-    const task = gantt.getTask(taskId);
-    if (task.periods) {
-        task.periods = task.periods.filter(p => p.id !== periodId);
-        gantt.updateTask(taskId);
-        gantt.render();
-    }
-}
-
-// 期間の日付を更新
-function updatePeriodDates(taskId, periodId, newStartDate, newEndDate) {
-    const task = gantt.getTask(taskId);
-    if (task.periods) {
-        const period = task.periods.find(p => p.id === periodId);
-        if (period) {
-            // 重なりチェック（自分自身を除外）
-            const tempPeriods = task.periods.filter(p => p.id !== periodId);
-            const tempTask = Object.assign({}, task, { periods: tempPeriods });
-            
-            if (checkPeriodOverlap(tempTask, newStartDate, newEndDate)) {
-                gantt.alert({
-                    type: "error",
-                    text: "既存の期間と重なっています。"
-                });
-                gantt.render();
-                return;
-            }
-            
-            period.start_date = new Date(newStartDate);
-            period.end_date = new Date(newEndDate);
-            gantt.updateTask(taskId);
-            gantt.render();
-        }
-    }
-}
-
-// 背景色に応じたテキスト色を取得
-function getTextColorForBackground(hexColor) {
-    const r = parseInt(hexColor.substring(1, 3), 16);
-    const g = parseInt(hexColor.substring(3, 5), 16);
-    const b = parseInt(hexColor.substring(5, 7), 16);
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
-    return luminance > 128 ? '#000000' : '#FFFFFF';
-}
-
-// タイムラインでのドラッグイベントを設定
+// イベント設定
 gantt.attachEvent("onGanttReady", function() {
     const timelineElement = gantt.$task_data;
     
+    setTimeout(() => {
+        renderAllExistingPeriods();
+    }, 500);
+    
+    gantt.attachEvent("onDataUpdate", function() {
+        setTimeout(() => {
+            renderAllExistingPeriods();
+        }, 100);
+    });
+    
+    gantt.attachEvent("onGanttRender", function() {
+        setTimeout(() => {
+            renderAllExistingPeriods();
+        }, 50);
+    });
+    
     let isDrawing = false;
-    let startX = 0;
     
     timelineElement.addEventListener('mousedown', function(e) {
-        if (!addPeriodMode) return;
-        
-        // 試運転バーをクリックした場合は無視
-        if (e.target.closest('.gantt_additional_period')) {
+        if (!addPeriodMode || e.target.closest('.gantt_additional_period')) {
             return;
         }
         
-        // タスク行を特定 - より広範囲で検索
         let taskElement = e.target.closest('.gantt_task_row');
         
-        // gantt_task_rowが見つからない場合、別の方法で探す
-        if (!taskElement) {
-            // クリック位置のY座標からタスクを特定
-            const y = e.clientY;
-            const taskRows = document.querySelectorAll('.gantt_task_row');
-            for (let row of taskRows) {
-                const rect = row.getBoundingClientRect();
-                if (y >= rect.top && y <= rect.bottom) {
-                    taskElement = row;
-                    break;
-                }
+        if (taskElement) {
+            currentTaskId = taskElement.getAttribute('task_id');
+        } else {
+            const timelineRect = timelineElement.getBoundingClientRect();
+            const pos = gantt.getScrollState();
+            const relativeY = e.clientY - timelineRect.top;
+            const absoluteY = relativeY + pos.y;
+            const rowHeight = gantt.config.row_height || 23;
+            const taskIndex = Math.floor(absoluteY / rowHeight);
+            
+            const tasks = gantt.getTaskByTime();
+            
+            if (tasks[taskIndex]) {
+                currentTaskId = tasks[taskIndex].id;
             }
         }
         
-        if (!taskElement) return;
+        if (!currentTaskId || !gantt.isTaskExists(currentTaskId)) {
+            return;
+        }
         
-        const taskId = taskElement.getAttribute('task_id');
-        
-        if (!taskId || !gantt.isTaskExists(taskId)) return;
-        
-        currentTaskId = taskId;
         isDrawing = true;
-        startX = e.clientX;
-        
-        // ドラッグ開始位置の日付を取得
-        const pos = gantt.getScrollState();
-        const x = e.clientX - timelineElement.getBoundingClientRect().left + pos.x;
-        dragStartDate = gantt.dateFromPos(x);
+        const date = getDateFromMouseEvent(e, timelineElement);
+        dragStartDate = date;
+        dragEndDate = new Date(date);
         
         e.preventDefault();
     });
     
     timelineElement.addEventListener('mousemove', function(e) {
-        if (!isDrawing || !addPeriodMode || !currentTaskId) return;
+        if (!isDrawing || !addPeriodMode || !currentTaskId) {
+            return;
+        }
         
-        // 現在位置の日付を取得
-        const pos = gantt.getScrollState();
-        const x = e.clientX - timelineElement.getBoundingClientRect().left + pos.x;
-        dragEndDate = gantt.dateFromPos(x);
+        const date = getDateFromMouseEvent(e, timelineElement);
+        dragEndDate = date;
         
-        // プレビューを表示
         showDragPreview(currentTaskId, dragStartDate, dragEndDate);
-        
         e.preventDefault();
     });
     
     document.addEventListener('mouseup', function(e) {
-        if (!isDrawing || !addPeriodMode || !currentTaskId) {
+        if (isDrawing && addPeriodMode && currentTaskId) {
             isDrawing = false;
-            return;
-        }
-        
-        isDrawing = false;
-        removeDragPreview();
-        
-        if (dragStartDate && dragEndDate) {
-            // 開始と終了を正しい順序に
-            let start = dragStartDate;
-            let end = dragEndDate;
+            removeDragPreview();
             
-            if (start.getTime() > end.getTime()) {
-                [start, end] = [end, start];
+            if (!dragEndDate) {
+                dragEndDate = new Date(dragStartDate);
             }
             
-            // 期間が1日未満の場合は1日に設定
-            if (end.getTime() - start.getTime() < 24 * 60 * 60 * 1000) {
-                end = new Date(start);
-                end.setDate(end.getDate() + 1);
-            }
-            
-            // 期間を追加
-            if (addPeriodToTask(currentTaskId, start, end)) {
-                gantt.render();
-            }
-        }
-        
-        dragStartDate = null;
-        dragEndDate = null;
-        currentTaskId = null;
-    });
-    
-    // 試運転バーのドラッグ中の処理
-    document.addEventListener('mousemove', function(e) {
-        if (isDraggingPeriod && draggedPeriodData) {
-            e.preventDefault();
-            
-            const timelineElement = gantt.$task_data;
-            const pos = gantt.getScrollState();
-            const x = e.clientX - timelineElement.getBoundingClientRect().left + pos.x;
-            
-            const newDate = gantt.dateFromPos(x - dragOffsetX);
-            const duration = draggedPeriodData.endDate.getTime() - draggedPeriodData.startDate.getTime();
-            const newEndDate = new Date(newDate.getTime() + duration);
-            
-            // リアルタイムで位置を更新
-            const task = gantt.getTask(draggedPeriodData.taskId);
-            const sizes = gantt.getTaskPosition(task, newDate, newEndDate);
-            draggedPeriodData.element.style.left = sizes.left + 'px';
-            
-        } else if (isResizingPeriod && draggedPeriodData) {
-            e.preventDefault();
-            
-            const timelineElement = gantt.$task_data;
-            const pos = gantt.getScrollState();
-            const x = e.clientX - timelineElement.getBoundingClientRect().left + pos.x;
-            const newDate = gantt.dateFromPos(x);
-            
-            const task = gantt.getTask(draggedPeriodData.taskId);
-            
-            if (resizeDirection === 'left') {
-                // 左端をリサイズ
-                if (newDate < draggedPeriodData.endDate) {
-                    const sizes = gantt.getTaskPosition(task, newDate, draggedPeriodData.endDate);
-                    draggedPeriodData.element.style.left = sizes.left + 'px';
-                    draggedPeriodData.element.style.width = sizes.width + 'px';
+            if (dragStartDate && dragEndDate && currentTaskId) {
+                let start = normalizeDate(dragStartDate);
+                let end = normalizeDate(dragEndDate);
+                
+                if (start.getTime() > end.getTime()) {
+                    [start, end] = [end, start];
                 }
-            } else if (resizeDirection === 'right') {
-                // 右端をリサイズ
-                if (newDate > draggedPeriodData.startDate) {
-                    const sizes = gantt.getTaskPosition(task, draggedPeriodData.startDate, newDate);
-                    draggedPeriodData.element.style.width = sizes.width + 'px';
+                
+                if (end.getTime() === start.getTime()) {
+                    end = new Date(start);
+                    end.setDate(end.getDate() + 1);
                 }
-            }
-        }
-    });
-    
-    // 試運転バーのドラッグ終了
-    document.addEventListener('mouseup', function(e) {
-        if (isDraggingPeriod && draggedPeriodData) {
-            const timelineElement = gantt.$task_data;
-            const pos = gantt.getScrollState();
-            const x = e.clientX - timelineElement.getBoundingClientRect().left + pos.x;
-            
-            const newStartDate = gantt.dateFromPos(x - dragOffsetX);
-            const duration = draggedPeriodData.endDate.getTime() - draggedPeriodData.startDate.getTime();
-            const newEndDate = new Date(newStartDate.getTime() + duration);
-            
-            // 期間を更新
-            updatePeriodDates(draggedPeriodData.taskId, draggedPeriodData.periodId, newStartDate, newEndDate);
-            
-            draggedPeriodData.element.style.opacity = '1';
-            isDraggingPeriod = false;
-            draggedPeriodData = null;
-            dragOffsetX = 0;
-            
-        } else if (isResizingPeriod && draggedPeriodData) {
-            const timelineElement = gantt.$task_data;
-            const pos = gantt.getScrollState();
-            const x = e.clientX - timelineElement.getBoundingClientRect().left + pos.x;
-            const newDate = gantt.dateFromPos(x);
-            
-            let newStartDate = draggedPeriodData.startDate;
-            let newEndDate = draggedPeriodData.endDate;
-            
-            if (resizeDirection === 'left') {
-                if (newDate < draggedPeriodData.endDate) {
-                    newStartDate = newDate;
-                }
-            } else if (resizeDirection === 'right') {
-                if (newDate > draggedPeriodData.startDate) {
-                    newEndDate = newDate;
+                
+                if (addPeriodToTask(currentTaskId, start, end)) {
+                    gantt.refreshData();
                 }
             }
             
-            // 期間を更新
-            updatePeriodDates(draggedPeriodData.taskId, draggedPeriodData.periodId, newStartDate, newEndDate);
-            
-            draggedPeriodData.element.style.opacity = '1';
-            isResizingPeriod = false;
-            draggedPeriodData = null;
-            resizeDirection = null;
+            dragStartDate = null;
+            dragEndDate = null;
+            currentTaskId = null;
+        } else {
+            isDrawing = false;
         }
     });
 });
 
-// ドラッグ中のプレビューを表示
-function showDragPreview(taskId, startDate, endDate) {
-    if (!startDate || !endDate) return;
-    
-    const task = gantt.getTask(taskId);
-    
-    // 開始と終了を正しい順序に
-    let start = new Date(startDate);
-    let end = new Date(endDate);
-    
-    if (start.getTime() > end.getTime()) {
-        [start, end] = [end, start];
+// フォールバック処理
+setTimeout(() => {
+    const timelineElement = gantt.$task_data;
+    if (timelineElement && !timelineElement.hasAttribute('data-events-attached')) {
+        timelineElement.setAttribute('data-events-attached', 'true');
+        
+        let isDrawing = false;
+        
+        timelineElement.addEventListener('mousedown', function(e) {
+            if (!addPeriodMode || e.target.closest('.gantt_additional_period')) {
+                return;
+            }
+            
+            let taskElement = e.target.closest('.gantt_task_row');
+            
+            if (taskElement) {
+                currentTaskId = taskElement.getAttribute('task_id');
+            } else {
+                const timelineRect = timelineElement.getBoundingClientRect();
+                const pos = gantt.getScrollState();
+                const relativeY = e.clientY - timelineRect.top;
+                const absoluteY = relativeY + pos.y;
+                const rowHeight = gantt.config.row_height || 23;
+                const taskIndex = Math.floor(absoluteY / rowHeight);
+                
+                const tasks = gantt.getTaskByTime();
+                
+                if (tasks[taskIndex]) {
+                    currentTaskId = tasks[taskIndex].id;
+                }
+            }
+            
+            if (!currentTaskId || !gantt.isTaskExists(currentTaskId)) {
+                return;
+            }
+            
+            isDrawing = true;
+            const date = getDateFromMouseEvent(e, timelineElement);
+            dragStartDate = date;
+            dragEndDate = new Date(date);
+            
+            e.preventDefault();
+        });
+        
+        timelineElement.addEventListener('mousemove', function(e) {
+            if (!isDrawing || !addPeriodMode || !currentTaskId) {
+                return;
+            }
+            
+            const date = getDateFromMouseEvent(e, timelineElement);
+            dragEndDate = date;
+            
+            showDragPreview(currentTaskId, dragStartDate, dragEndDate);
+            e.preventDefault();
+        });
+        
+        document.addEventListener('mouseup', function(e) {
+            if (isDrawing && addPeriodMode && currentTaskId) {
+                isDrawing = false;
+                removeDragPreview();
+                
+                if (!dragEndDate) {
+                    dragEndDate = new Date(dragStartDate);
+                }
+                
+                if (dragStartDate && dragEndDate && currentTaskId) {
+                    let start = normalizeDate(dragStartDate);
+                    let end = normalizeDate(dragEndDate);
+                    
+                    if (start.getTime() > end.getTime()) {
+                        [start, end] = [end, start];
+                    }
+                    
+                    if (end.getTime() === start.getTime()) {
+                        end = new Date(start);
+                        end.setDate(end.getDate() + 1);
+                    }
+                    
+                    if (addPeriodToTask(currentTaskId, start, end)) {
+                        gantt.refreshData();
+                        setTimeout(() => {
+                            gantt.render();
+                        }, 200);
+                    }
+                }
+                
+                dragStartDate = null;
+                dragEndDate = null;
+                currentTaskId = null;
+            }
+        });
     }
-    
-    // 既存のプレビューを削除
-    removeDragPreview();
-    
-    // 新しいプレビューを作成
-    const sizes = gantt.getTaskPosition(task, start, end);
-    
-    dragPreviewElement = document.createElement('div');
-    dragPreviewElement.className = 'gantt_drag_preview';
-    dragPreviewElement.style.cssText = `
-        position: absolute;
-        left: ${sizes.left}px;
-        top: ${sizes.top + 5}px;
-        width: ${sizes.width}px;
-        height: ${gantt.config.row_height - 10}px;
-        background-color: ${TRIAL_RUN_CONFIG.color};
-        opacity: 0.6;
-        border: 2px dashed ${shadeColor(TRIAL_RUN_CONFIG.color, -30)};
-        border-radius: 3px;
-        pointer-events: none;
-        z-index: 10;
-    `;
-    
-    gantt.$task_data.appendChild(dragPreviewElement);
-}
+}, 1000);
 
-// 色を暗くする関数
-function shadeColor(color, percent) {
-    let R = parseInt(color.substring(1,3),16);
-    let G = parseInt(color.substring(3,5),16);
-    let B = parseInt(color.substring(5,7),16);
-
-    R = parseInt(R * (100 + percent) / 100);
-    G = parseInt(G * (100 + percent) / 100);
-    B = parseInt(B * (100 + percent) / 100);
-
-    R = (R<255)?R:255;  
-    G = (G<255)?G:255;  
-    B = (B<255)?B:255;  
-
-    const RR = ((R.toString(16).length==1)?"0"+R.toString(16):R.toString(16));
-    const GG = ((G.toString(16).length==1)?"0"+G.toString(16):G.toString(16));
-    const BB = ((B.toString(16).length==1)?"0"+B.toString(16):B.toString(16));
-
-    return "#"+RR+GG+BB;
-}
-
-// periodsデータをSupabaseに保存できる形式に変換
+// データベース用のシリアライズ関数
 function serializePeriodsForDB(periods) {
     if (!periods || periods.length === 0) return null;
     return JSON.stringify(periods.map(p => ({
@@ -643,7 +968,6 @@ function serializePeriodsForDB(periods) {
     })));
 }
 
-// Supabaseから取得したperiodsデータを変換
 function deserializePeriodsFromDB(periodsJson) {
     if (!periodsJson) return [];
     try {

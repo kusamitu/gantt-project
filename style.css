@@ -3,7 +3,7 @@ html, body {
     height: 100%;
     padding: 0;
     margin: 0;
-    overflow: hidden; /* 画面全体のスクロールを無効化 */
+    overflow: hidden;
 }
 
 #gantt_here {
@@ -14,9 +14,13 @@ html, body {
 .gantt-controls {
     padding: 10px;
     background-color: #f4f4f4;
-    border-bottom: 1px solid #ddd;
+    border-bottom: 1px solid #b0b0b0;
     height: 50px;
     box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
 }
 
 .gantt-controls button {
@@ -32,6 +36,32 @@ html, body {
     background-color: #357abd;
 }
 
+/* 右側のボタングループ */
+.gantt-controls-right {
+    position: absolute;
+    display: flex;
+    gap: 8px;
+    transition: left 0.3s ease;
+}
+
+/* タイムライン切替ボタン */
+#toggle_timeline_btn {
+    background-color: #1565C0;
+}
+
+#toggle_timeline_btn:hover {
+    background-color: #0D47A1;
+}
+
+/* 試運転期間追加ボタン */
+#add_period_btn {
+    background-color: #00ACC1;
+}
+
+#add_period_btn:hover {
+    background-color: #00838F;
+}
+
 .gantt_grid_delete_icon {
     width: 100%;
     height: 100%;
@@ -39,18 +69,6 @@ html, body {
     background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-6 5v6m4-6v6"/></svg>');
     background-repeat: no-repeat;
     background-position: center;
-}
-
-/* グリッドに縦の罫線を追加 */
-.gantt_grid_scale .gantt_grid_head_cell,
-.gantt_grid_data .gantt_cell {
-    border-right: 1px solid #dcdcdc;
-}
-
-/* 最後の列の右側の罫線を削除 */
-.gantt_grid_scale .gantt_grid_head_cell:last-of-type,
-.gantt_grid_data .gantt_cell:last-of-type {
-    border-right: none;
 }
 
 /* 担当者と場所のセルでテキストを省略表示 */
@@ -84,104 +102,52 @@ html, body {
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
-/* --- リソース負荷表示用のスタイル --- */
-.gantt_resource_cell_workday {
-    background-color: #dcf4dd; /* 通常時の背景色（薄い緑） */
+/* リソース負荷セルの基本スタイル */
+.gantt_resource_cell_empty {
+    background-color: transparent !important;
 }
 
 .gantt_resource_cell_overload {
-    background-color: #ffdddd; /* 過負荷時の背景色（薄い赤） */
+    background-color: #ff0000 !important;
 }
 
-.gantt_resource_cell_empty {
-    background-color: #fafafa; /* タスクがない日の背景色（薄いグレー） */
+/* リソースタイムラインのタスクラベル */
+.resource-timeline-task-label {
+    font-weight: 500;
 }
 
-.gantt_resource_timeline .gantt_task_cell div {
-    text-align: center;
+/* リソースマーカーを非表示 */
+.gantt_resource_marker {
+    opacity: 0 !important;
 }
 
-/* --- 担当者・場所管理ウィンドウの共通スタイル --- */
-.resource-editor,
-.place-editor {
-    padding: 20px;
-    background-color: white;
-    border-radius: 5px;
+/* リソースタイムラインの位置指定 */
+.gantt_resource_timeline {
+    position: relative;
 }
 
-.resource-editor h3,
-.place-editor h3 {
-    margin-top: 0;
+/* タスクの開始セル - 左側の角を丸く */
+.gantt_resource_marker.resource-task-start {
+    border-top-left-radius: 3px !important;
+    border-bottom-left-radius: 3px !important;
 }
 
-.resource-list,
-.place-list {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 20px 0;
-    max-height: 200px;
-    overflow-y: auto;
-    border: 1px solid #ddd;
-    padding: 5px;
+/* タスクの終了セル - 右側の角を丸く */
+.gantt_resource_marker.resource-task-end {
+    border-top-right-radius: 3px !important;
+    border-bottom-right-radius: 3px !important;
 }
 
-.resource-list-item,
-.place-list-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 5px;
-    border-bottom: 1px solid #eee;
+/* 1日だけのタスク - 両側の角を丸く */
+.gantt_resource_marker.resource-task-single {
+    border-radius: 3px !important;
 }
 
-.resource-list-item:last-child,
-.place-list-item:last-child {
-    border-bottom: none;
+/* グリッドの縦線を表示 */
+.gantt_grid .gantt_cell {
+    border-right: 1px solid #cecece;
 }
 
-.resource-delete-btn,
-.place-delete-btn {
-    color: #e91e63;
-    cursor: pointer;
-    font-size: 16px;
-}
-
-.resource-form,
-.place-form {
-    display: flex;
-}
-
-.resource-form input,
-.place-form input {
-    flex-grow: 1;
-    padding: 8px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-}
-
-.resource-form button,
-.place-form button {
-    margin-left: 10px;
-    background-color: #4CAF50;
-    color: white;
-    border: none;
-    padding: 8px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.resource-form button:hover,
-.place-form button:hover {
-    background-color: #45a049;
-}
-
-/* --- 追加期間（試運転）バーのスタイル --- */
-.gantt_additional_period {
-    background-color: #FF69B4 !important;
-    border-color: #E91E63 !important;
-    z-index: 2 !important;
-}
-
-.gantt_additional_period * {
-    pointer-events: auto;
+.gantt_grid_head_cell {
+    border-right: 1px solid #cecece;
 }

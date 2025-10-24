@@ -5,14 +5,27 @@
     <title>DHTMLX Gantt</title>
     <link href="codebase/dhtmlxgantt.css" rel="stylesheet">
     <link href="style.css" rel="stylesheet">
+    <style>
+        /* ボタンの色を濃いめのグレーに変更 */
+        .gantt-controls button {
+            background-color: #5a5a5a;
+        }
+        .gantt-controls button:hover {
+            background-color: #404040;
+        }
+    </style>
 </head>
 <body>
     <div class="gantt-controls">
         <button id="resource_manager_btn">担当者登録</button>
         <button id="place_manager_btn">場所登録</button>
         <button id="color_settings_btn">バーの色設定</button>
-        <button id="toggle_timeline_btn">場所負荷に切替</button>
-        <button id="add_period_btn">試運転期間を追加</button>
+        <button id="height_settings_btn">高さ設定</button>
+        <button id="column_width_settings_btn">列幅設定</button>
+        <div class="gantt-controls-right" style="visibility: hidden;">
+            <button id="toggle_timeline_btn">場所負荷に切替</button>
+            <button id="add_period_btn">試運転期間を追加</button>
+        </div>
     </div>
     <div id="gantt_here"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -21,11 +34,12 @@
     <script src="js/gantt-config.js"></script>
     <script src="js/gantt-data.js"></script>
     <script src="js/gantt-ui.js"></script>
+    <script src="js/gantt-height-settings.js"></script>
+    <script src="js/gantt-column-width-settings.js"></script>
     <script src="js/gantt-register.js"></script>
     <script src="js/custom-lightbox.js"></script>
     <script src="js/gantt-tooltip.js"></script>
     <script src="js/gantt-timeline-toggle.js"></script>
-    <script src="js/gantt-row-colors.js"></script>
     <script src="js/gantt-multi-bars.js"></script>
     <script src="js/main.js"></script>
 </body>

@@ -101,22 +101,51 @@ function customSort(a, b) {
 
 async function loadAllData() {
     try {
-        // リソースと場所のデータを取得
-        const [{ data: resources }, { data: places }, { data: tasks }] = await Promise.all([
-            db.from('resources').select('*'),
-            db.from('places').select('*'),
-            db.from('tasks').select('*')
-        ]);
+        console.log('[DEBUG] Loading all data...');
+        
+        // リソースと場所のデータを取得（エラーハンドリング付き）
+        let resources, places, tasks;
+        
+        try {
+            console.log('[DEBUG] Fetching resources for loadAllData...');
+            const resourcesResponse = await fetchWithRetry(() => db.from('resources').select('*'));
+            resources = resourcesResponse.data;
+            console.log('[DEBUG] Resources loaded:', resources?.length || 0);
+        } catch (error) {
+            console.error('[ERROR] Failed to fetch resources in loadAllData:', error);
+            resources = [];
+        }
+        
+        try {
+            console.log('[DEBUG] Fetching places for loadAllData...');
+            const placesResponse = await fetchWithRetry(() => db.from('places').select('*'));
+            places = placesResponse.data;
+            console.log('[DEBUG] Places loaded:', places?.length || 0);
+        } catch (error) {
+            console.error('[ERROR] Failed to fetch places in loadAllData:', error);
+            places = [];
+        }
+        
+        try {
+            console.log('[DEBUG] Fetching tasks for loadAllData...');
+            const tasksResponse = await fetchWithRetry(() => db.from('tasks').select('*'));
+            tasks = tasksResponse.data;
+            console.log('[DEBUG] Tasks loaded:', tasks?.length || 0);
+        } catch (error) {
+            console.error('[ERROR] Failed to fetch tasks in loadAllData:', error);
+            tasks = [];
+        }
 
         // タスクデータのみをクリア
         gantt.clearAll();
 
-        // リソースデータストアを更新
+        // リソースデータストアを更新（部署情報も含める）
         const resourceStore = gantt.getDatastore("resource");
-        const formattedResources = resources.map(r => ({
+        const formattedResources = (resources || []).map(r => ({
             id: r.id,
             text: r.name,
-            parent: 0
+            parent: 0,
+            department: r.department  // 部署情報を追加
         }));
         
         if (resourceStore) {
@@ -126,7 +155,7 @@ async function loadAllData() {
 
         // 場所データストアを更新
         const placeStore = gantt.getDatastore("place");
-        const formattedPlaces = places.map(p => ({
+        const formattedPlaces = (places || []).map(p => ({
             id: p.id,
             text: p.name,
             parent: 0,
@@ -138,15 +167,19 @@ async function loadAllData() {
             placeStore.parse(formattedPlaces);
         }
 
-        // serverListを更新
-        const mappedResources = resources.map(r => ({ key: r.id, label: r.name }));
+        // serverListを更新（部署情報も含める）
+        const mappedResources = (resources || []).map(r => ({ 
+            key: r.id, 
+            label: r.name,
+            department: r.department  // 部署情報を追加
+        }));
         gantt.serverList("resource_options", mappedResources);
 
-        const mappedPlaces = places.map(p => ({ key: p.id, label: p.name }));
+        const mappedPlaces = (places || []).map(p => ({ key: p.id, label: p.name }));
         gantt.serverList("place_options", mappedPlaces);
 
         // タスクデータをフォーマット
-        const formattedTasks = tasks.filter(task => task && task.id).map(task => ({
+        const formattedTasks = (tasks || []).filter(task => task && task.id).map(task => ({
             id: task.id,
             text: task.order_no,
             parent: task.parent || 0,

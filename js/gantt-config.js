@@ -4,6 +4,17 @@ gantt.plugins({
     multiselect: true
 });
 
+// --- デフォルトタスク名の無効化 ---
+gantt.locale.labels.new_task = "";
+
+// --- ライトボックスの無効化 ---
+gantt.config.details_on_create = false;
+gantt.config.details_on_dblclick = false;
+
+// --- 自動スケジューリングの無効化 ---
+gantt.config.auto_scheduling = false;
+gantt.config.auto_scheduling_initial = false;
+
 // --- リソース設定 ---
 gantt.config.resource_store = "resource";
 gantt.config.resource_render_empty_cells = true;
@@ -19,7 +30,14 @@ gantt.config.columns = [
         tree: true, 
         width: 70, 
         resize: true,
-        editor: { type: "text", map_to: "text" }
+        editor: { type: "text", map_to: "text" },
+        template: function(task) {
+            // textが空文字列またはタスクIDと同じ場合は空欄を表示
+            if (!task.text || task.text === "" || task.text === task.id.toString()) {
+                return "";
+            }
+            return task.text;
+        }
     },
     { 
         name: "machine-unit", 
@@ -175,8 +193,37 @@ gantt.config.layout = {
 };
 
 // --- テンプレート設定 ---
+// タスクバーに工事番号の最初の1文字に応じたクラスを付与
 gantt.templates.task_class = function(start, end, task) {
-    return "";
+    // 工事番号の最初の1文字を取得
+    const orderNo = task.text || '';
+    const firstChar = orderNo.charAt(0);
+    
+    if (firstChar === '2') {
+        return "task-2000";
+    } else if (firstChar === 'D' || firstChar === 'd') {
+        return "task-d";
+    } else if (orderNo && orderNo.trim() !== '') {
+        return "task-other";
+    }
+    
+    // 担当者未設定の場合
+    if (!task.resource_id || task.resource_id.length === 0) {
+        return "task-no-resource";
+    }
+    
+    // 電装の判定
+    const resourceOptions = gantt.serverList("resource_options");
+    const resourceIds = Array.isArray(task.resource_id) ? task.resource_id : [task.resource_id];
+    
+    const firstResourceId = resourceIds[0];
+    const resource = resourceOptions.find(r => r.key == firstResourceId);
+    
+    if (resource && resource.department === '電装') {
+        return "task-electrical";
+    }
+    
+    return "task-no-resource";
 };
 
 gantt.templates.task_text = function(start, end, task) {
@@ -191,7 +238,7 @@ gantt.config.date_grid = "%n/%j";
 gantt.config.start_on_monday = true;
 gantt.config.min_column_width = 45;
 gantt.config.scale_height = 50;
-gantt.config.row_height = 25;
+gantt.config.round_dnd_dates = false;
 gantt.config.scales = [
     { unit: "month", step: 1, format: "%n月" },
     { unit: "week", step: 1, format: "%n/%j" }
@@ -208,6 +255,7 @@ gantt.config.resource_calendars = {};
 gantt.config.process_resource_assignments = true;
 gantt.config.resource_scale_unit = "day";
 gantt.config.resource_scale_step = 1;
+gantt.config.resource_render_empty_cells = true;
 
 // リソースタイムラインのテンプレート設定
 gantt.templates.resource_cell_class = function(start_date, end_date, resource, tasks) {
@@ -216,15 +264,32 @@ gantt.templates.resource_cell_class = function(start_date, end_date, resource, t
     } else if (tasks.length > 1) {
         return "gantt_resource_cell_overload";
     } else {
-        return "gantt_resource_cell_single";
+        const task = tasks[0];
+        const taskStart = task.start_date;
+        const taskEnd = task.end_date;
+        
+        let classes = "gantt_resource_cell_single";
+        
+        if (start_date <= taskStart && taskStart < end_date) {
+            classes += " resource-task-start";
+        }
+        
+        if (start_date < taskEnd && taskEnd <= end_date) {
+            classes += " resource-task-end";
+        }
+        
+        if (start_date <= taskStart && taskEnd <= end_date) {
+            classes = "gantt_resource_cell_single resource-task-single";
+        }
+        
+        return classes;
     }
 };
 
 gantt.templates.resource_cell_value = function(start_date, end_date, resource, tasks) {
-    return tasks.length || "";
+    return "";
 };
 
-// リソースとタスクの紐付け関数
 gantt.templates.resource_task = function(task, resource) {
     if (!task.resource_id || (Array.isArray(task.resource_id) && task.resource_id.length === 0)) {
         return false;
@@ -238,7 +303,6 @@ gantt.templates.resource_task = function(task, resource) {
 gantt.attachEvent("onTaskClick", function(id, e) {
     // 削除アイコンのクリック処理
     if (e.target.classList.contains("gantt_grid_delete_icon")) {
-        // idが有効かチェック
         if (!id || !gantt.isTaskExists(id)) {
             return false;
         }
@@ -249,52 +313,113 @@ gantt.attachEvent("onTaskClick", function(id, e) {
             cancel: "いいえ",
             callback: (result) => {
                 if (result) {
-                    // 削除前に再度存在確認
                     if (gantt.isTaskExists(id)) {
                         gantt.deleteTask(id);
                     }
                 }
-                // イベントリスナーを削除
                 document.removeEventListener("keydown", handleKeyPress);
             }
         });
         
-        // Enterキーのイベントリスナーを追加
         const handleKeyPress = function(event) {
             if (event.key === "Enter") {
                 event.preventDefault();
-                // 「はい」ボタンを探してクリック
                 const okButton = document.querySelector('.gantt_popup_button[data-result="true"]');
                 if (okButton) {
                     okButton.click();
                 } else {
-                    // 別の方法でボタンを探す
                     const buttons = document.querySelectorAll('.gantt_popup_button');
                     if (buttons.length > 0) {
-                        buttons[0].click(); // 最初のボタン（はい）
+                        buttons[0].click();
                     }
                 }
                 document.removeEventListener("keydown", handleKeyPress);
             } else if (event.key === "Escape") {
                 event.preventDefault();
-                // 「いいえ」ボタンを探してクリック
                 const cancelButton = document.querySelector('.gantt_popup_button[data-result="false"]');
                 if (cancelButton) {
                     cancelButton.click();
                 } else {
                     const buttons = document.querySelectorAll('.gantt_popup_button');
                     if (buttons.length > 1) {
-                        buttons[1].click(); // 2番目のボタン（いいえ）
+                        buttons[1].click();
                     }
                 }
                 document.removeEventListener("keydown", handleKeyPress);
             }
         };
         
-        // キーボードイベントを追加（少し遅延させてダイアログが表示された後に追加）
         setTimeout(() => {
             document.addEventListener("keydown", handleKeyPress);
         }, 100);
+        
+        return false;
+    }
+    
+    // ＋ボタンのクリック処理 - 空白の新規タスクを追加
+    if (e.target.closest('.gantt_add')) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // クリックされた行のタスクIDを取得
+        const row = e.target.closest('.gantt_row');
+        const parentId = row ? row.getAttribute('task_id') : null;
+        
+        if (parentId && gantt.isTaskExists(parentId)) {
+            // 子タスクの作成（親タスクのデータを複製）
+            const parentTask = gantt.getTask(parentId);
+            const newId = gantt.uid();
+            const newTask = {
+                id: newId,
+                text: parentTask.text || "",
+                overview: parentTask.overview || "",
+                customer: parentTask.customer || "",
+                'machine-unit': parentTask['machine-unit'] || "",
+                dispatch_date: parentTask.dispatch_date ? new Date(parentTask.dispatch_date) : null,
+                start_date: parentTask.start_date ? new Date(parentTask.start_date) : null,
+                end_date: parentTask.end_date ? new Date(parentTask.end_date) : null,
+                duration: parentTask.duration || 0,
+                resource_id: [],
+                place_id: [],
+                periods: [],
+                parent: parentId
+            };
+            
+            gantt.addTask(newTask, parentId);
+            
+            // タスク追加後、表示を更新
+            setTimeout(() => {
+                gantt.open(parentId); // 親タスクを展開
+                gantt.refreshData();
+            }, 0);
+        } else {
+            // 親タスクの作成（完全に新規）
+            const newId = gantt.uid();
+            const newTask = {
+                id: newId,
+                text: "",
+                overview: "",
+                customer: "",
+                'machine-unit': "",
+                start_date: null,
+                end_date: null,
+                duration: 0,
+                dispatch_date: null,
+                resource_id: [],
+                place_id: [],
+                periods: []
+            };
+            
+            gantt.addTask(newTask);
+            
+            // タスク追加後、強制的に値をクリア
+            setTimeout(() => {
+                const task = gantt.getTask(newId);
+                task.text = "";
+                gantt.updateTask(newId);
+                gantt.refreshData();
+            }, 0);
+        }
         
         return false;
     }
@@ -305,19 +430,16 @@ gantt.attachEvent("onTaskClick", function(id, e) {
         const columnName = cell.getAttribute("data-column-name");
         const column = gantt.config.columns.find(col => col.name === columnName);
         
-        // 担当者列: カスタムライトボックスを開く
         if (columnName === "resource_id") {
             showCustomLightbox(id, 'resource_id', e);
             return false;
         }
         
-        // 場所列: カスタムライトボックスを開く
         if (columnName === "place_id") {
             showCustomLightbox(id, 'place_id', e);
             return false;
         }
         
-        // その他の列はインライン編集
         if (column && column.editor) {
             gantt.ext.inlineEditors.startEdit(id, columnName);
             return false;
@@ -327,13 +449,11 @@ gantt.attachEvent("onTaskClick", function(id, e) {
     return true;
 });
 
-// ダブルクリック時はフルモードのカスタムライトボックスを開く
 gantt.attachEvent("onTaskDblClick", function(id, e) {
-    showCustomLightbox(id);
+    // ダブルクリック時は何もしない（ライトボックスを開かない）
     return false;
 });
 
-// セル描画後にdata属性を追加
 gantt.attachEvent("onGanttRender", function() {
     setTimeout(() => {
         document.querySelectorAll(".gantt_cell").forEach(cell => {
@@ -343,4 +463,55 @@ gantt.attachEvent("onGanttRender", function() {
             }
         });
     }, 0);
+});
+
+// 新規タスク追加時にデフォルト値を空にする
+gantt.attachEvent("onBeforeTaskAdd", function(id, task) {
+    // 親タスクがある場合（子タスク）は日付をクリアしない
+    if (task.parent) {
+        if (!task.text || task.text === id.toString()) {
+            task.text = "";
+        }
+        return true;
+    }
+    
+    // 親タスクの場合のみ日付をクリア
+    if (!task.text || task.text === id.toString()) {
+        task.text = "";
+    }
+    task.start_date = null;
+    task.end_date = null;
+    task.duration = 0;
+    return true;
+});
+
+// 出荷日マーカーを追加するカスタムレイヤー
+gantt.addTaskLayer(function(task) {
+    if (!task.dispatch_date) return false;
+    
+    const dispatchPos = gantt.posFromDate(task.dispatch_date);
+    const taskTop = gantt.getTaskTop(task.id);
+    const rowHeight = gantt.config.row_height;
+    const barHeight = gantt.config.task_height;
+    const verticalOffset = Math.floor((rowHeight - barHeight) / 2);
+    
+    const marker = document.createElement('div');
+    marker.className = 'dispatch-date-marker';
+    marker.innerHTML = '★';
+    marker.style.cssText = `
+        position: absolute;
+        left: ${dispatchPos - 8}px;
+        top: ${taskTop + verticalOffset + Math.floor(barHeight / 2) - 10}px;
+        width: 16px;
+        height: 20px;
+        color: #FF0000;
+        font-size: 20px;
+        line-height: 20px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 5;
+        text-shadow: 0 0 3px white;
+    `;
+    
+    return marker;
 });
